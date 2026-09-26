@@ -23,6 +23,55 @@
     --danger-bg: #2b1616;
     --radius: 14px;
   }
+
+  /* ---------- Temas alternativos ---------- */
+  body[data-tema="blanco"] {
+    --bg: #f4f6f9;
+    --bg-alt: #ffffff;
+    --card: #ffffff;
+    --border: #dde1e8;
+    --text: #1a1f2b;
+    --text-muted: #667085;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-soft: #e8f0fe;
+    --ok: #16a34a;
+    --ok-bg: #dcfce7;
+    --warn: #d97706;
+    --warn-bg: #fef3c7;
+    --danger: #dc2626;
+    --danger-bg: #fee2e2;
+  }
+  body[data-tema="azul"] {
+    --bg: #0a1628;
+    --bg-alt: #101f36;
+    --card: #142640;
+    --border: #234065;
+    --text: #e6edf7;
+    --text-muted: #8fa3c0;
+    --accent: #38bdf8;
+    --accent-hover: #63cffa;
+    --accent-soft: #16324f;
+  }
+  body[data-tema="verde"] {
+    --bg: #0d1912;
+    --bg-alt: #12241a;
+    --card: #16301f;
+    --border: #234a30;
+    --text: #e6f4ea;
+    --text-muted: #8fb89d;
+    --accent: #22c55e;
+    --accent-hover: #4ade80;
+    --accent-soft: #163d24;
+  }
+
+  #temaSelector {
+    width: auto;
+    padding: 7px 10px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -231,7 +280,15 @@
       <img id="userFoto" src="" alt="">
       <span id="userNombre"></span>
     </div>
-    <button class="secundario chica" id="btnLogout" type="button">Cerrar sesión</button>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <select id="temaSelector" title="Cambiar color de la página">
+        <option value="oscuro">🌙 Oscuro</option>
+        <option value="blanco">☀️ Blanco</option>
+        <option value="azul">🔵 Azul</option>
+        <option value="verde">🟢 Verde</option>
+      </select>
+      <button class="secundario chica" id="btnLogout" type="button">Cerrar sesión</button>
+    </div>
   </div>
 
   <header>
@@ -388,6 +445,19 @@ function guardarEstado() {
 }
 
 const fmt = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CO');
+
+/* ============================================================
+   TEMA DE COLOR (se guarda en este dispositivo)
+   ============================================================ */
+const temaSelector = document.getElementById('temaSelector');
+const temaGuardado = localStorage.getItem('temaPreferido') || 'oscuro';
+document.body.setAttribute('data-tema', temaGuardado);
+temaSelector.value = temaGuardado;
+
+temaSelector.addEventListener('change', () => {
+  document.body.setAttribute('data-tema', temaSelector.value);
+  localStorage.setItem('temaPreferido', temaSelector.value);
+});
 
 /* ============================================================
    AUTENTICACIÓN
