@@ -163,7 +163,7 @@
   .dia-chip.vencido { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
 
   .multas-lista { font-size: 0.82rem; margin: 8px 0; }
-  .multas-lista .item { display:flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+  .multas-lista .item { display:flex; justify-content: space-between; align-items:center; padding: 5px 0; border-bottom: 1px dashed var(--border); }
 
   .acciones-prestamo { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .acciones-lista { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
@@ -760,7 +760,7 @@ function render() {
         <label>Multas aplicadas</label>
         <div class="multas-lista" id="multas-${p.id}">
           ${p.multas.length === 0 ? '<span style="color:var(--text-muted)">Sin multas</span>' :
-            p.multas.map(m => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${m.motivo || 'Incumplimiento'}</span><span>${fmt(m.monto)}</span></div>`).join('')}
+            p.multas.map((m, idx) => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${m.motivo || 'Incumplimiento'}</span><span style="display:flex;align-items:center;gap:8px;">${fmt(m.monto)}<button class="chica secundario" data-accion="quitar-multa" data-id="${p.id}" data-idx="${idx}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('')}
         </div>
 
         <div class="acciones-prestamo">
@@ -801,6 +801,13 @@ function render() {
         const motivo = prompt('Motivo de la multa (opcional):', 'Incumplimiento de pago');
         prestamo.multas.push({ fecha: new Date().toISOString().slice(0, 10), monto: MONTO_MULTA, motivo: motivo || 'Incumplimiento' });
         guardarEstado(); render();
+      }
+      if (btn.dataset.accion === 'quitar-multa') {
+        const idx = Number(btn.dataset.idx);
+        if (confirm('¿Quitar esta multa?')) {
+          prestamo.multas.splice(idx, 1);
+          guardarEstado(); render();
+        }
       }
       if (btn.dataset.accion === 'borrar') {
         if (confirm(`¿Eliminar el préstamo de ${prestamo.cliente}? Esta acción no se puede deshacer.`)) {
