@@ -226,18 +226,28 @@
 
   .vacio { text-align: center; color: var(--text-muted); padding: 30px 10px; font-size: 0.9rem; }
 
-  /* ---------- Tabs de meses / estado ---------- */
+  /* ---------- Tabs de meses / estado / forma de cobro ---------- */
   .tabs-meses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .tab-mes {
     padding: 8px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg-alt);
     font-size: 0.82rem; cursor: pointer; user-select: none; text-transform: capitalize;
   }
   .tab-mes.activo { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .filtro-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0 0 6px; }
   .resumen-mes {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px;
   }
   .resumen-mes div { background: var(--bg-alt); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 0.78rem; }
   .resumen-mes div span { display:block; font-size: 1rem; font-weight: 700; margin-top: 2px; color: var(--accent); }
+
+  /* ---------- Encabezado de cada grupo (forma de cobro) ---------- */
+  .grupo-titulo {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;
+    margin: 22px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--accent);
+    font-weight: 700; font-size: 0.98rem;
+  }
+  .grupo-titulo:first-child { margin-top: 4px; }
+  .grupo-titulo small { color: var(--text-muted); font-weight: 500; font-size: 0.76rem; }
 
   /* ---------- Reporte de impresión (oculto en pantalla) ---------- */
   #reporteImprimir { display: none; }
@@ -383,7 +393,13 @@
       <h2 style="margin:0;">📋 Préstamos</h2>
       <button class="secundario" id="btnImprimir">🖨 Imprimir reporte</button>
     </div>
+
+    <div class="filtro-label">Forma de cobro</div>
+    <div class="tabs-meses" id="tabsModalidad"></div>
+
+    <div class="filtro-label">Estado</div>
     <div class="tabs-meses" id="tabsEstado"></div>
+
     <div id="listaPrestamos"></div>
     <div class="vacio" id="vacioMsg">Aún no has registrado ningún préstamo.</div>
   </div>
@@ -443,10 +459,19 @@ const INTERES_POR_DEFECTO = 20;
 const DIAS_COBRO_DIARIO = 24;
 const MONTO_MULTA = 10000;
 
+// Grupos por forma de cobro (el orden de este arreglo es el orden en que se muestran)
+const GRUPOS = [
+  { clave: 'diario',          corto: 'Diarios',       titulo: '📆 Diarios · 24 días' },
+  { clave: 'quincenal',       corto: 'Quincenales',   titulo: '🗓 Quincenales · 1 pago' },
+  { clave: 'quincenal_doble', corto: 'Dos quincenas', titulo: '🗓 Dos quincenas · 2 pagos' },
+  { clave: 'mensual',         corto: 'Mensuales',     titulo: '📅 Mensuales · 30 a 30' }
+];
+
 let estado = { capitalBase: 0, prestamos: [] };
 let mesSeleccionado = 'todos';
-let filtroEstado = 'todos';      // 'todos' | 'activos' | 'pagados'
-const abiertos = new Set();      // ids de préstamos con el detalle desplegado (se mantiene al re-renderizar)
+let filtroEstado = 'todos';        // 'todos' | 'activos' | 'pagados'
+let filtroModalidad = 'todas';     // 'todas' | 'diario' | 'quincenal' | 'quincenal_doble' | 'mensual'
+const abiertos = new Set();        // ids de préstamos con el detalle desplegado (se mantiene al re-renderizar)
 
 /* ---------- Helpers de fecha en HORA LOCAL (toISOString usa UTC y puede dar "mañana" en la noche) ---------- */
 const aISO = f => `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
@@ -530,6 +555,7 @@ onAuthStateChanged(auth, (user) => {
     estado = { capitalBase: 0, prestamos: [] };
     mesSeleccionado = 'todos';
     filtroEstado = 'todos';
+    filtroModalidad = 'todas';
     abiertos.clear();
   }
 });
@@ -691,6 +717,8 @@ document.getElementById('crearPrestamo').addEventListener('click', () => {
   document.getElementById('previewInfo').style.display = 'none';
 
   mesSeleccionado = fechaInicio.slice(0, 7); // salta automáticamente al mes del nuevo préstamo
+  filtroModalidad = modalidad;                // y a la forma de cobro del nuevo préstamo, para que lo veas de una
+  filtroEstado = 'todos';
   render();
 });
 
@@ -704,10 +732,13 @@ document.getElementById('guardarCapital').addEventListener('click', () => {
 });
 
 /* ============================================================
-   REPORTE DE IMPRESIÓN
+   REPORTE DE IMPRESIÓN (agrupado por forma de cobro, luego por fecha de inicio)
    ============================================================ */
 document.getElementById('btnImprimir').addEventListener('click', () => {
-  const ordenados = [...estado.prestamos].sort((a, b) => new Date(a.fechaInicio) - new Date(b.fechaInicio));
+  const orden = clave => { const i = GRUPOS.findIndex(g => g.clave === clave); return i === -1 ? 99 : i; };
+  const ordenados = [...estado.prestamos].sort((a, b) =>
+    orden(a.modalidad) - orden(b.modalidad) || new Date(a.fechaInicio) - new Date(b.fechaInicio)
+  );
   const tbody = document.getElementById('reporteTbody');
   tbody.innerHTML = '';
 
@@ -750,6 +781,87 @@ function obtenerMesesDisponibles() {
 function nombreMes(clave) {
   const [y, m] = clave.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+}
+
+// Construye la tarjeta (HTML + chips de días) de un préstamo
+function crearTarjetaPrestamo(p) {
+  const c = calcularPrestamo(p);
+  const div = document.createElement('div');
+  div.className = 'prestamo';
+
+  const fechaInicioStr = new Date(p.fechaInicio + 'T00:00:00').toLocaleDateString('es-CO');
+  const fechaFinStr = new Date(c.fechaFin + 'T00:00:00').toLocaleDateString('es-CO');
+  const etiquetaCuota = p.modalidad === 'diario' ? 'Cuota diaria' : (c.numCuotas > 1 ? 'Cuota (c/u)' : 'Pago único');
+
+  div.innerHTML = `
+    <div class="prestamo-top" data-toggle="${p.id}">
+      <div>
+        <div class="nombre">${esc(p.cliente)}</div>
+        <div class="sub">CC ${esc(p.cedula) || '—'} · 📱 ${esc(p.celular) || 'Sin celular'} · ${esc(p.direccion) || 'Sin dirección'}</div>
+        <div class="sub">Inicio: ${fechaInicioStr} · Culmina: ${fechaFinStr} · Interés: ${p.interes}%</div>
+      </div>
+      <div>
+        <span class="badge ${c.finalizado ? 'finalizado' : 'activo'}">${c.finalizado ? 'Pagado ✅' : 'Activo'}</span>
+        <span class="badge modalidad">${etiquetaModalidad(p.modalidad)}</span>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div>Monto<span>${fmt(p.monto)}</span></div>
+      <div>Ganancia (${p.interes}%)<span>${fmt(c.ganancia)}</span></div>
+      <div>${etiquetaCuota}<span>${fmt(c.cuota)}</span></div>
+      <div>Cuotas pagadas<span>${c.diasPagados}/${c.numCuotas}</span></div>
+      <div>Vencidos sin pagar<span style="color:var(--danger)">${c.diasVencidos}</span></div>
+      <div>Deuda pendiente<span>${fmt(Math.max(c.deudaPendiente, 0))}</span></div>
+    </div>
+
+    <div class="detalle ${abiertos.has(p.id) ? 'abierto' : ''}" id="detalle-${p.id}">
+      ${c.finalizado ? `<div class="pagado-banner">✅ Préstamo pagado${c.fechaPago ? ' el ' + new Date(c.fechaPago + 'T00:00:00').toLocaleDateString('es-CO') : ''}</div>` : ''}
+
+      <label style="margin-top:6px;">Fechas de pago (clic para marcar pagado)</label>
+      <div class="dias-grid" id="dias-${p.id}"></div>
+
+      <label>Multas aplicadas</label>
+      <div class="multas-lista" id="multas-${p.id}">
+        ${p.multas.length === 0 ? '<span style="color:var(--text-muted)">Sin multas</span>' :
+          p.multas.map((m, idx) => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${esc(m.motivo) || 'Incumplimiento'}</span><span style="display:flex;align-items:center;gap:8px;">${fmt(m.monto)}<button class="chica secundario" data-accion="quitar-multa" data-id="${p.id}" data-idx="${idx}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('')}
+      </div>
+
+      <div class="acciones-prestamo">
+        ${c.finalizado
+          ? `<button class="chica secundario" data-accion="reabrir" data-id="${p.id}">↩ Reabrir préstamo</button>`
+          : `<button class="chica ok" data-accion="pagar" data-id="${p.id}">✅ Marcar como pagado</button>
+             <button class="chica peligro" data-accion="multa" data-id="${p.id}">⚠ Aplicar multa ($10.000)</button>`}
+        <button class="chica secundario" data-accion="borrar" data-id="${p.id}">🗑 Eliminar (error de digitación)</button>
+      </div>
+    </div>
+  `;
+
+  const diasGrid = div.querySelector(`#dias-${p.id}`);
+  const hoy = hoyLocal();
+  p.dias.forEach((d, idx) => {
+    const chip = document.createElement('div');
+    let clase = 'dia-chip';
+    if (d.pagado) clase += ' pagado';
+    else if (d.fecha < hoy) clase += ' vencido';
+    chip.className = clase;
+    const fechaCorta = new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' });
+    const etiqueta = p.modalidad === 'diario' ? `Día ${idx + 1}` : (p.dias.length > 1 ? `Cuota ${idx + 1}` : 'Pago único');
+    chip.innerHTML = `<span class="num">${etiqueta}</span>${fechaCorta}`;
+    chip.addEventListener('click', () => {
+      d.pagado = !d.pagado;
+      // Si con este clic quedaron todas pagadas, guardamos la fecha de cierre; si no, la quitamos
+      if (p.dias.every(x => x.pagado)) {
+        if (!p.fechaPago) p.fechaPago = hoyLocal();
+      } else {
+        delete p.fechaPago;
+      }
+      guardarEstado(); render();
+    });
+    diasGrid.appendChild(chip);
+  });
+
+  return div;
 }
 
 function render() {
@@ -798,17 +910,6 @@ function render() {
     tabsDiv.appendChild(tab);
   });
 
-  // --- Tabs de estado (Todos / Activos / Pagados) ---
-  const tabsEstadoDiv = document.getElementById('tabsEstado');
-  tabsEstadoDiv.innerHTML = '';
-  [['todos', 'Todos'], ['activos', 'Activos'], ['pagados', 'Pagados ✅']].forEach(([clave, texto]) => {
-    const tab = document.createElement('div');
-    tab.className = 'tab-mes' + (filtroEstado === clave ? ' activo' : '');
-    tab.textContent = texto;
-    tab.addEventListener('click', () => { filtroEstado = clave; render(); });
-    tabsEstadoDiv.appendChild(tab);
-  });
-
   // --- Filtrar préstamos según el mes elegido ---
   const prestamosDelMes = mesSeleccionado === 'todos'
     ? estado.prestamos
@@ -827,99 +928,69 @@ function render() {
     <div>Ganancia esperada<span>${fmt(gananciaMes)}</span></div>
   `;
 
-  // --- Filtrar además por estado (activo / pagado) para la lista ---
-  const prestamosVisibles = prestamosDelMes.filter(p => {
+  // --- Filtro por estado (activo / pagado), sobre los préstamos del mes ---
+  const prestamosMesEstado = prestamosDelMes.filter(p => {
     if (filtroEstado === 'todos') return true;
     const fin = calcularPrestamo(p).finalizado;
     return filtroEstado === 'pagados' ? fin : !fin;
   });
 
-  // --- Lista de préstamos (filtrada por mes y estado) ---
+  // --- Tabs de forma de cobro, con contador (cuenta sobre mes + estado) ---
+  const tabsModalidadDiv = document.getElementById('tabsModalidad');
+  tabsModalidadDiv.innerHTML = '';
+  const opcionesModalidad = [{ clave: 'todas', corto: 'Todas', cuenta: prestamosMesEstado.length }]
+    .concat(GRUPOS.map(g => ({ clave: g.clave, corto: g.corto, cuenta: prestamosMesEstado.filter(p => p.modalidad === g.clave).length })));
+  opcionesModalidad.forEach(o => {
+    const tab = document.createElement('div');
+    tab.className = 'tab-mes' + (filtroModalidad === o.clave ? ' activo' : '');
+    tab.textContent = `${o.corto} (${o.cuenta})`;
+    tab.addEventListener('click', () => { filtroModalidad = o.clave; render(); });
+    tabsModalidadDiv.appendChild(tab);
+  });
+
+  // --- Tabs de estado (Todos / Activos / Pagados) ---
+  const tabsEstadoDiv = document.getElementById('tabsEstado');
+  tabsEstadoDiv.innerHTML = '';
+  [['todos', 'Todos'], ['activos', 'Activos'], ['pagados', 'Pagados ✅']].forEach(([clave, texto]) => {
+    const tab = document.createElement('div');
+    tab.className = 'tab-mes' + (filtroEstado === clave ? ' activo' : '');
+    tab.textContent = texto;
+    tab.addEventListener('click', () => { filtroEstado = clave; render(); });
+    tabsEstadoDiv.appendChild(tab);
+  });
+
+  // --- Lista final: mes + estado + forma de cobro ---
+  const prestamosVisibles = filtroModalidad === 'todas'
+    ? prestamosMesEstado
+    : prestamosMesEstado.filter(p => p.modalidad === filtroModalidad);
+
   const lista = document.getElementById('listaPrestamos');
   const vacioMsg = document.getElementById('vacioMsg');
   lista.innerHTML = '';
   vacioMsg.style.display = prestamosVisibles.length === 0 ? 'block' : 'none';
+  vacioMsg.textContent = estado.prestamos.length === 0
+    ? 'Aún no has registrado ningún préstamo.'
+    : 'No hay préstamos con estos filtros.';
 
   const ordenados = [...prestamosVisibles].sort((a, b) => b.id - a.id);
 
-  ordenados.forEach(p => {
-    const c = calcularPrestamo(p);
-    const div = document.createElement('div');
-    div.className = 'prestamo';
+  // Un bloque por forma de cobro, cada uno con su encabezado y subtotales
+  GRUPOS.forEach(g => {
+    const delGrupo = ordenados.filter(p => p.modalidad === g.clave);
+    if (delGrupo.length === 0) return;
 
-    const fechaInicioStr = new Date(p.fechaInicio + 'T00:00:00').toLocaleDateString('es-CO');
-    const fechaFinStr = new Date(c.fechaFin + 'T00:00:00').toLocaleDateString('es-CO');
-    const etiquetaCuota = p.modalidad === 'diario' ? 'Cuota diaria' : (c.numCuotas > 1 ? 'Cuota (c/u)' : 'Pago único');
-
-    div.innerHTML = `
-      <div class="prestamo-top" data-toggle="${p.id}">
-        <div>
-          <div class="nombre">${esc(p.cliente)}</div>
-          <div class="sub">CC ${esc(p.cedula) || '—'} · 📱 ${esc(p.celular) || 'Sin celular'} · ${esc(p.direccion) || 'Sin dirección'}</div>
-          <div class="sub">Inicio: ${fechaInicioStr} · Culmina: ${fechaFinStr} · Interés: ${p.interes}%</div>
-        </div>
-        <div>
-          <span class="badge ${c.finalizado ? 'finalizado' : 'activo'}">${c.finalizado ? 'Pagado ✅' : 'Activo'}</span>
-          <span class="badge modalidad">${etiquetaModalidad(p.modalidad)}</span>
-        </div>
-      </div>
-
-      <div class="mini-stats">
-        <div>Monto<span>${fmt(p.monto)}</span></div>
-        <div>Ganancia (${p.interes}%)<span>${fmt(c.ganancia)}</span></div>
-        <div>${etiquetaCuota}<span>${fmt(c.cuota)}</span></div>
-        <div>Cuotas pagadas<span>${c.diasPagados}/${c.numCuotas}</span></div>
-        <div>Vencidos sin pagar<span style="color:var(--danger)">${c.diasVencidos}</span></div>
-        <div>Deuda pendiente<span>${fmt(Math.max(c.deudaPendiente, 0))}</span></div>
-      </div>
-
-      <div class="detalle ${abiertos.has(p.id) ? 'abierto' : ''}" id="detalle-${p.id}">
-        ${c.finalizado ? `<div class="pagado-banner">✅ Préstamo pagado${c.fechaPago ? ' el ' + new Date(c.fechaPago + 'T00:00:00').toLocaleDateString('es-CO') : ''}</div>` : ''}
-
-        <label style="margin-top:6px;">Fechas de pago (clic para marcar pagado)</label>
-        <div class="dias-grid" id="dias-${p.id}"></div>
-
-        <label>Multas aplicadas</label>
-        <div class="multas-lista" id="multas-${p.id}">
-          ${p.multas.length === 0 ? '<span style="color:var(--text-muted)">Sin multas</span>' :
-            p.multas.map((m, idx) => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${esc(m.motivo) || 'Incumplimiento'}</span><span style="display:flex;align-items:center;gap:8px;">${fmt(m.monto)}<button class="chica secundario" data-accion="quitar-multa" data-id="${p.id}" data-idx="${idx}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('')}
-        </div>
-
-        <div class="acciones-prestamo">
-          ${c.finalizado
-            ? `<button class="chica secundario" data-accion="reabrir" data-id="${p.id}">↩ Reabrir préstamo</button>`
-            : `<button class="chica ok" data-accion="pagar" data-id="${p.id}">✅ Marcar como pagado</button>
-               <button class="chica peligro" data-accion="multa" data-id="${p.id}">⚠ Aplicar multa ($10.000)</button>`}
-          <button class="chica secundario" data-accion="borrar" data-id="${p.id}">🗑 Eliminar (error de digitación)</button>
-        </div>
-      </div>
-    `;
-
-    lista.appendChild(div);
-
-    const diasGrid = div.querySelector(`#dias-${p.id}`);
-    const hoy = hoyLocal();
-    p.dias.forEach((d, idx) => {
-      const chip = document.createElement('div');
-      let clase = 'dia-chip';
-      if (d.pagado) clase += ' pagado';
-      else if (d.fecha < hoy) clase += ' vencido';
-      chip.className = clase;
-      const fechaCorta = new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' });
-      const etiqueta = p.modalidad === 'diario' ? `Día ${idx + 1}` : (p.dias.length > 1 ? `Cuota ${idx + 1}` : 'Pago único');
-      chip.innerHTML = `<span class="num">${etiqueta}</span>${fechaCorta}`;
-      chip.addEventListener('click', () => {
-        d.pagado = !d.pagado;
-        // Si con este clic quedaron todas pagadas, guardamos la fecha de cierre; si no, la quitamos
-        if (p.dias.every(x => x.pagado)) {
-          if (!p.fechaPago) p.fechaPago = hoyLocal();
-        } else {
-          delete p.fechaPago;
-        }
-        guardarEstado(); render();
-      });
-      diasGrid.appendChild(chip);
+    let prestadoGrupo = 0, porCobrarGrupo = 0;
+    delGrupo.forEach(p => {
+      prestadoGrupo += p.monto;
+      porCobrarGrupo += Math.max(calcularPrestamo(p).deudaPendiente, 0);
     });
+
+    const titulo = document.createElement('div');
+    titulo.className = 'grupo-titulo';
+    titulo.innerHTML = `<span>${g.titulo}</span><small>${delGrupo.length} préstamo${delGrupo.length === 1 ? '' : 's'} · Prestado ${fmt(prestadoGrupo)} · Por cobrar ${fmt(porCobrarGrupo)}</small>`;
+    lista.appendChild(titulo);
+
+    delGrupo.forEach(p => lista.appendChild(crearTarjetaPrestamo(p)));
   });
 
   document.querySelectorAll('[data-toggle]').forEach(el => {
