@@ -177,6 +177,8 @@
   button.secundario { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   button.peligro { background: var(--danger); }
   button.peligro:hover { background: #ff6666; }
+  button.ok { background: var(--ok); }
+  button.ok:hover { background: #34d676; }
   button.chica { padding: 6px 12px; font-size: 0.78rem; }
 
   .info-preview {
@@ -193,6 +195,11 @@
   .badge.activo { background: var(--warn-bg); color: var(--warn); }
   .badge.finalizado { background: var(--ok-bg); color: var(--ok); }
   .badge.modalidad { background: var(--accent-soft); color: var(--accent); margin-left: 6px; }
+
+  .pagado-banner {
+    background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok);
+    border-radius: 9px; padding: 10px 12px; font-size: 0.85rem; font-weight: 600; margin: 10px 0;
+  }
 
   .mini-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 14px 0; }
   .mini-stats div { background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; font-size: 0.78rem; }
@@ -219,7 +226,7 @@
 
   .vacio { text-align: center; color: var(--text-muted); padding: 30px 10px; font-size: 0.9rem; }
 
-  /* ---------- Tabs de meses ---------- */
+  /* ---------- Tabs de meses / estado ---------- */
   .tabs-meses { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .tab-mes {
     padding: 8px 14px; border-radius: 20px; border: 1px solid var(--border); background: var(--bg-alt);
@@ -301,7 +308,7 @@
     <h2>⚙️ Configuración</h2>
     <div class="capital-config">
       <div class="campo">
-        <label for="capitalBaseInput">Capital total de la empresa</label>
+        <label for="capitalBaseInput">Capital total de la empresa (capital inicial)</label>
         <input type="number" id="capitalBaseInput" placeholder="Ej: 3000000" min="0">
       </div>
       <button id="guardarCapital">Guardar</button>
@@ -309,10 +316,10 @@
   </div>
 
   <div class="dashboard">
-    <div class="stat ganancia"><div class="label">Ganancias (intereses + multas)</div><div class="valor" id="statGanancias">$0</div></div>
+    <div class="stat ganancia"><div class="label">Ganancias cobradas (intereses + multas)</div><div class="valor" id="statGanancias">$0</div></div>
     <div class="stat disponible"><div class="label">Capital disponible (en mano)</div><div class="valor" id="statDisponible">$0</div></div>
-    <div class="stat movimiento"><div class="label">Capital en movimiento (prestado)</div><div class="valor" id="statMovimiento">$0</div></div>
-    <div class="stat proyeccion"><div class="label">Proyección al finalizar cobros activos</div><div class="valor" id="statProyeccion">$0</div></div>
+    <div class="stat movimiento"><div class="label">Capital en movimiento (por recuperar)</div><div class="valor" id="statMovimiento">$0</div></div>
+    <div class="stat proyeccion"><div class="label">Proyección al finalizar todos los cobros</div><div class="valor" id="statProyeccion">$0</div></div>
   </div>
 
   <!-- ===== NUEVO PRÉSTAMO ===== -->
@@ -376,6 +383,7 @@
       <h2 style="margin:0;">📋 Préstamos</h2>
       <button class="secundario" id="btnImprimir">🖨 Imprimir reporte</button>
     </div>
+    <div class="tabs-meses" id="tabsEstado"></div>
     <div id="listaPrestamos"></div>
     <div class="vacio" id="vacioMsg">Aún no has registrado ningún préstamo.</div>
   </div>
@@ -429,7 +437,7 @@ let unsubscribeSnapshot = null;
 let aplicandoCambioRemoto = false; // evita reescrituras innecesarias al aplicar un snapshot
 
 /* ============================================================
-   CONFIGURACIÓN Y ESTADO (ahora sincronizado con Firestore)
+   CONFIGURACIÓN Y ESTADO (sincronizado con Firestore)
    ============================================================ */
 const INTERES_POR_DEFECTO = 20;
 const DIAS_COBRO_DIARIO = 24;
@@ -437,6 +445,17 @@ const MONTO_MULTA = 10000;
 
 let estado = { capitalBase: 0, prestamos: [] };
 let mesSeleccionado = 'todos';
+let filtroEstado = 'todos';      // 'todos' | 'activos' | 'pagados'
+const abiertos = new Set();      // ids de préstamos con el detalle desplegado (se mantiene al re-renderizar)
+
+/* ---------- Helpers de fecha en HORA LOCAL (toISOString usa UTC y puede dar "mañana" en la noche) ---------- */
+const aISO = f => `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+const hoyLocal = () => aISO(new Date());
+
+/* ---------- Escapar texto del usuario antes de meterlo en innerHTML ---------- */
+const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+));
 
 function guardarEstado() {
   if (!currentUser || aplicandoCambioRemoto) return;
@@ -510,6 +529,8 @@ onAuthStateChanged(auth, (user) => {
     document.getElementById('appContent').style.display = 'none';
     estado = { capitalBase: 0, prestamos: [] };
     mesSeleccionado = 'todos';
+    filtroEstado = 'todos';
+    abiertos.clear();
   }
 });
 
@@ -522,7 +543,7 @@ function generarDiasDiario(fechaInicioStr, numDias) {
   fecha.setDate(fecha.getDate() + 1);
   const dias = [];
   while (dias.length < numDias) {
-    if (fecha.getDay() !== 0) dias.push({ fecha: fecha.toISOString().slice(0, 10), pagado: false });
+    if (fecha.getDay() !== 0) dias.push({ fecha: aISO(fecha), pagado: false });
     fecha.setDate(fecha.getDate() + 1);
   }
   return dias;
@@ -546,17 +567,16 @@ function generarCortesQuincenales(fechaInicioStr, cantidad) {
   const cortes = [];
   for (let i = 0; i < cantidad; i++) {
     actual = siguienteCorteDesdeFecha(actual);
-    cortes.push({ fecha: actual.toISOString().slice(0, 10), pagado: false });
+    cortes.push({ fecha: aISO(actual), pagado: false });
   }
   return cortes;
 }
 
-// Modalidad MENSUAL: "30 a 30", un mes exacto después
+// Modalidad MENSUAL: "30 a 30", un mes exacto después (si el mes siguiente no tiene ese día, usa su último día)
 function proximoCorteMensual(fechaInicioStr) {
   const [y, m, d] = fechaInicioStr.split('-').map(Number);
-  const fecha = new Date(y, m - 1, d);
-  fecha.setMonth(fecha.getMonth() + 1);
-  return fecha;
+  const ultimoDiaSiguiente = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(d, ultimoDiaSiguiente));
 }
 
 function generarDias(modalidad, fechaInicioStr) {
@@ -565,7 +585,7 @@ function generarDias(modalidad, fechaInicioStr) {
   if (modalidad === 'quincenal_doble') return generarCortesQuincenales(fechaInicioStr, 2);
   if (modalidad === 'mensual') {
     const corte = proximoCorteMensual(fechaInicioStr);
-    return [{ fecha: corte.toISOString().slice(0, 10), pagado: false }];
+    return [{ fecha: aISO(corte), pagado: false }];
   }
 }
 
@@ -585,12 +605,17 @@ function calcularPrestamo(p) {
   const diasPagados = p.dias.filter(d => d.pagado).length;
   const montoCobrado = diasPagados * cuota;
   const deudaTotal = totalAPagar + totalMultas;
-  const deudaPendiente = deudaTotal - montoCobrado;
   const finalizado = diasPagados === numCuotas;
-  const hoy = new Date().toISOString().slice(0, 10);
+  // Si el préstamo está pagado, la deuda es 0 (se asume que las multas también se cobraron)
+  const deudaPendiente = finalizado ? 0 : deudaTotal - montoCobrado;
+  const hoy = hoyLocal();
   const diasVencidos = p.dias.filter(d => !d.pagado && d.fecha < hoy).length;
   const fechaFin = p.dias[p.dias.length - 1].fecha;
-  return { ganancia, totalAPagar, cuota, totalMultas, diasPagados, numCuotas, montoCobrado, deudaTotal, deudaPendiente, finalizado, diasVencidos, fechaFin };
+  return {
+    ganancia, totalAPagar, cuota, totalMultas, diasPagados, numCuotas, montoCobrado,
+    deudaTotal, deudaPendiente, finalizado, diasVencidos, fechaFin,
+    fechaPago: p.fechaPago || null
+  };
 }
 
 /* ============================================================
@@ -629,7 +654,7 @@ document.getElementById('pMonto').addEventListener('input', actualizarPreview);
 document.getElementById('pInteres').addEventListener('input', actualizarPreview);
 document.getElementById('pFecha').addEventListener('change', actualizarPreview);
 document.getElementById('pModalidad').addEventListener('change', actualizarPreview);
-document.getElementById('pFecha').valueAsDate = new Date();
+document.getElementById('pFecha').value = hoyLocal();
 
 /* ============================================================
    CREAR PRÉSTAMO
@@ -642,7 +667,10 @@ document.getElementById('crearPrestamo').addEventListener('click', () => {
   const monto = Number(document.getElementById('pMonto').value);
   const fechaInicio = document.getElementById('pFecha').value;
   const modalidad = document.getElementById('pModalidad').value;
-  const interes = Number(document.getElementById('pInteres').value) || INTERES_POR_DEFECTO;
+
+  // Permite interés 0; solo usa el valor por defecto si el campo está vacío o inválido
+  const interesTexto = document.getElementById('pInteres').value;
+  const interes = (interesTexto === '' || isNaN(Number(interesTexto))) ? INTERES_POR_DEFECTO : Number(interesTexto);
 
   if (!cliente || !monto || !fechaInicio) { alert('Completa al menos nombre, monto y fecha de inicio.'); return; }
 
@@ -687,10 +715,10 @@ document.getElementById('btnImprimir').addEventListener('click', () => {
     const c = calcularPrestamo(p);
     const fila = document.createElement('tr');
     fila.innerHTML = `
-      <td>${p.cliente}</td>
-      <td>${p.cedula || '—'}</td>
-      <td>${p.celular || '—'}</td>
-      <td>${p.direccion || '—'}</td>
+      <td>${esc(p.cliente)}</td>
+      <td>${esc(p.cedula) || '—'}</td>
+      <td>${esc(p.celular) || '—'}</td>
+      <td>${esc(p.direccion) || '—'}</td>
       <td>${fmt(p.monto)}</td>
       <td>${p.interes}%</td>
       <td>${fmt(c.ganancia)}</td>
@@ -700,7 +728,7 @@ document.getElementById('btnImprimir').addEventListener('click', () => {
       <td>${c.diasPagados}/${c.numCuotas}</td>
       <td>${fmt(c.totalMultas)}</td>
       <td>${fmt(Math.max(c.deudaPendiente, 0))}</td>
-      <td>${c.finalizado ? 'Finalizado' : 'Activo'}</td>
+      <td>${c.finalizado ? 'Pagado' + (c.fechaPago ? ' (' + new Date(c.fechaPago + 'T00:00:00').toLocaleDateString('es-CO') + ')' : '') : 'Activo'}</td>
     `;
     tbody.appendChild(fila);
   });
@@ -715,7 +743,7 @@ document.getElementById('btnImprimir').addEventListener('click', () => {
 function obtenerMesesDisponibles() {
   const meses = new Set();
   estado.prestamos.forEach(p => meses.add(p.fechaInicio.slice(0, 7)));
-  meses.add(new Date().toISOString().slice(0, 7)); // el mes actual siempre aparece, aunque esté vacío
+  meses.add(hoyLocal().slice(0, 7)); // el mes actual siempre aparece, aunque esté vacío
   return [...meses].sort();
 }
 
@@ -725,24 +753,28 @@ function nombreMes(clave) {
 }
 
 function render() {
-  // --- Dashboard general (siempre sobre TODOS los préstamos) ---
-  let gananciasTotales = 0, capitalEnMovimiento = 0, gananciaEsperadaActivos = 0, multasPendientesActivos = 0;
+  /* --- Dashboard general (siempre sobre TODOS los préstamos) ---
+     Cada cuota pagada devuelve una parte proporcional del capital y una parte proporcional del interés.
+       avance = cuotas pagadas / total de cuotas
+       Capital en movimiento = lo prestado que aún no se ha recuperado  = monto * (1 - avance)
+       Ganancias cobradas    = interés cobrado hasta hoy (+ multas, cuando el préstamo ya está pagado)
+       Capital disponible    = capital inicial + ganancias cobradas - capital en movimiento
+       Proyección            = capital inicial + TODAS las ganancias (cobradas y pendientes) + multas */
+  let gananciasCobradas = 0, capitalEnMovimiento = 0, gananciaTotalProyectada = 0;
 
   estado.prestamos.forEach(p => {
     const c = calcularPrestamo(p);
-    if (c.finalizado) {
-      gananciasTotales += c.ganancia + c.totalMultas;
-    } else {
-      capitalEnMovimiento += p.monto;
-      gananciaEsperadaActivos += c.ganancia;
-      multasPendientesActivos += c.totalMultas;
-    }
+    const avance = c.diasPagados / c.numCuotas;
+    gananciasCobradas += c.ganancia * avance + (c.finalizado ? c.totalMultas : 0);
+    capitalEnMovimiento += p.monto * (1 - avance);
+    gananciaTotalProyectada += c.ganancia + c.totalMultas;
   });
 
-  const capitalDisponible = (estado.capitalBase || 0) - capitalEnMovimiento;
-  const proyeccion = (estado.capitalBase || 0) + gananciaEsperadaActivos + multasPendientesActivos;
+  const capitalBase = estado.capitalBase || 0;
+  const capitalDisponible = capitalBase + gananciasCobradas - capitalEnMovimiento;
+  const proyeccion = capitalBase + gananciaTotalProyectada;
 
-  document.getElementById('statGanancias').textContent = fmt(gananciasTotales);
+  document.getElementById('statGanancias').textContent = fmt(gananciasCobradas);
   document.getElementById('statMovimiento').textContent = fmt(capitalEnMovimiento);
   document.getElementById('statDisponible').textContent = fmt(capitalDisponible);
   document.getElementById('statProyeccion').textContent = fmt(proyeccion);
@@ -766,6 +798,17 @@ function render() {
     tabsDiv.appendChild(tab);
   });
 
+  // --- Tabs de estado (Todos / Activos / Pagados) ---
+  const tabsEstadoDiv = document.getElementById('tabsEstado');
+  tabsEstadoDiv.innerHTML = '';
+  [['todos', 'Todos'], ['activos', 'Activos'], ['pagados', 'Pagados ✅']].forEach(([clave, texto]) => {
+    const tab = document.createElement('div');
+    tab.className = 'tab-mes' + (filtroEstado === clave ? ' activo' : '');
+    tab.textContent = texto;
+    tab.addEventListener('click', () => { filtroEstado = clave; render(); });
+    tabsEstadoDiv.appendChild(tab);
+  });
+
   // --- Filtrar préstamos según el mes elegido ---
   const prestamosDelMes = mesSeleccionado === 'todos'
     ? estado.prestamos
@@ -784,13 +827,20 @@ function render() {
     <div>Ganancia esperada<span>${fmt(gananciaMes)}</span></div>
   `;
 
-  // --- Lista de préstamos (filtrada por mes) ---
+  // --- Filtrar además por estado (activo / pagado) para la lista ---
+  const prestamosVisibles = prestamosDelMes.filter(p => {
+    if (filtroEstado === 'todos') return true;
+    const fin = calcularPrestamo(p).finalizado;
+    return filtroEstado === 'pagados' ? fin : !fin;
+  });
+
+  // --- Lista de préstamos (filtrada por mes y estado) ---
   const lista = document.getElementById('listaPrestamos');
   const vacioMsg = document.getElementById('vacioMsg');
   lista.innerHTML = '';
-  vacioMsg.style.display = prestamosDelMes.length === 0 ? 'block' : 'none';
+  vacioMsg.style.display = prestamosVisibles.length === 0 ? 'block' : 'none';
 
-  const ordenados = [...prestamosDelMes].sort((a, b) => b.id - a.id);
+  const ordenados = [...prestamosVisibles].sort((a, b) => b.id - a.id);
 
   ordenados.forEach(p => {
     const c = calcularPrestamo(p);
@@ -804,12 +854,12 @@ function render() {
     div.innerHTML = `
       <div class="prestamo-top" data-toggle="${p.id}">
         <div>
-          <div class="nombre">${p.cliente}</div>
-          <div class="sub">CC ${p.cedula || '—'} · 📱 ${p.celular || 'Sin celular'} · ${p.direccion || 'Sin dirección'}</div>
+          <div class="nombre">${esc(p.cliente)}</div>
+          <div class="sub">CC ${esc(p.cedula) || '—'} · 📱 ${esc(p.celular) || 'Sin celular'} · ${esc(p.direccion) || 'Sin dirección'}</div>
           <div class="sub">Inicio: ${fechaInicioStr} · Culmina: ${fechaFinStr} · Interés: ${p.interes}%</div>
         </div>
         <div>
-          <span class="badge ${c.finalizado ? 'finalizado' : 'activo'}">${c.finalizado ? 'Finalizado' : 'Activo'}</span>
+          <span class="badge ${c.finalizado ? 'finalizado' : 'activo'}">${c.finalizado ? 'Pagado ✅' : 'Activo'}</span>
           <span class="badge modalidad">${etiquetaModalidad(p.modalidad)}</span>
         </div>
       </div>
@@ -823,19 +873,24 @@ function render() {
         <div>Deuda pendiente<span>${fmt(Math.max(c.deudaPendiente, 0))}</span></div>
       </div>
 
-      <div class="detalle" id="detalle-${p.id}">
+      <div class="detalle ${abiertos.has(p.id) ? 'abierto' : ''}" id="detalle-${p.id}">
+        ${c.finalizado ? `<div class="pagado-banner">✅ Préstamo pagado${c.fechaPago ? ' el ' + new Date(c.fechaPago + 'T00:00:00').toLocaleDateString('es-CO') : ''}</div>` : ''}
+
         <label style="margin-top:6px;">Fechas de pago (clic para marcar pagado)</label>
         <div class="dias-grid" id="dias-${p.id}"></div>
 
         <label>Multas aplicadas</label>
         <div class="multas-lista" id="multas-${p.id}">
           ${p.multas.length === 0 ? '<span style="color:var(--text-muted)">Sin multas</span>' :
-            p.multas.map((m, idx) => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${m.motivo || 'Incumplimiento'}</span><span style="display:flex;align-items:center;gap:8px;">${fmt(m.monto)}<button class="chica secundario" data-accion="quitar-multa" data-id="${p.id}" data-idx="${idx}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('')}
+            p.multas.map((m, idx) => `<div class="item"><span>${new Date(m.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${esc(m.motivo) || 'Incumplimiento'}</span><span style="display:flex;align-items:center;gap:8px;">${fmt(m.monto)}<button class="chica secundario" data-accion="quitar-multa" data-id="${p.id}" data-idx="${idx}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('')}
         </div>
 
         <div class="acciones-prestamo">
-          <button class="chica peligro" data-accion="multa" data-id="${p.id}">⚠ Aplicar multa ($10.000)</button>
-          <button class="chica secundario" data-accion="borrar" data-id="${p.id}">🗑 Eliminar préstamo</button>
+          ${c.finalizado
+            ? `<button class="chica secundario" data-accion="reabrir" data-id="${p.id}">↩ Reabrir préstamo</button>`
+            : `<button class="chica ok" data-accion="pagar" data-id="${p.id}">✅ Marcar como pagado</button>
+               <button class="chica peligro" data-accion="multa" data-id="${p.id}">⚠ Aplicar multa ($10.000)</button>`}
+          <button class="chica secundario" data-accion="borrar" data-id="${p.id}">🗑 Eliminar (error de digitación)</button>
         </div>
       </div>
     `;
@@ -843,7 +898,7 @@ function render() {
     lista.appendChild(div);
 
     const diasGrid = div.querySelector(`#dias-${p.id}`);
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = hoyLocal();
     p.dias.forEach((d, idx) => {
       const chip = document.createElement('div');
       let clase = 'dia-chip';
@@ -853,13 +908,26 @@ function render() {
       const fechaCorta = new Date(d.fecha + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit' });
       const etiqueta = p.modalidad === 'diario' ? `Día ${idx + 1}` : (p.dias.length > 1 ? `Cuota ${idx + 1}` : 'Pago único');
       chip.innerHTML = `<span class="num">${etiqueta}</span>${fechaCorta}`;
-      chip.addEventListener('click', () => { d.pagado = !d.pagado; guardarEstado(); render(); });
+      chip.addEventListener('click', () => {
+        d.pagado = !d.pagado;
+        // Si con este clic quedaron todas pagadas, guardamos la fecha de cierre; si no, la quitamos
+        if (p.dias.every(x => x.pagado)) {
+          if (!p.fechaPago) p.fechaPago = hoyLocal();
+        } else {
+          delete p.fechaPago;
+        }
+        guardarEstado(); render();
+      });
       diasGrid.appendChild(chip);
     });
   });
 
   document.querySelectorAll('[data-toggle]').forEach(el => {
-    el.addEventListener('click', () => document.getElementById('detalle-' + el.dataset.toggle).classList.toggle('abierto'));
+    el.addEventListener('click', () => {
+      const id = el.dataset.toggle;
+      document.getElementById('detalle-' + id).classList.toggle('abierto');
+      if (abiertos.has(id)) abiertos.delete(id); else abiertos.add(id);
+    });
   });
 
   document.querySelectorAll('[data-accion]').forEach(btn => {
@@ -869,7 +937,8 @@ function render() {
       const prestamo = estado.prestamos.find(x => x.id === id);
       if (btn.dataset.accion === 'multa') {
         const motivo = prompt('Motivo de la multa (opcional):', 'Incumplimiento de pago');
-        prestamo.multas.push({ fecha: new Date().toISOString().slice(0, 10), monto: MONTO_MULTA, motivo: motivo || 'Incumplimiento' });
+        if (motivo === null) return; // canceló
+        prestamo.multas.push({ fecha: hoyLocal(), monto: MONTO_MULTA, motivo: motivo || 'Incumplimiento' });
         guardarEstado(); render();
       }
       if (btn.dataset.accion === 'quitar-multa') {
@@ -879,9 +948,24 @@ function render() {
           guardarEstado(); render();
         }
       }
+      if (btn.dataset.accion === 'pagar') {
+        if (confirm(`¿Confirmas que ${prestamo.cliente} pagó el total?`)) {
+          prestamo.dias.forEach(d => d.pagado = true);
+          prestamo.fechaPago = hoyLocal();
+          guardarEstado(); render();
+        }
+      }
+      if (btn.dataset.accion === 'reabrir') {
+        if (confirm('¿Reabrir este préstamo?')) {
+          prestamo.dias[prestamo.dias.length - 1].pagado = false;
+          delete prestamo.fechaPago;
+          guardarEstado(); render();
+        }
+      }
       if (btn.dataset.accion === 'borrar') {
-        if (confirm(`¿Eliminar el préstamo de ${prestamo.cliente}? Esta acción no se puede deshacer.`)) {
+        if (confirm(`¿Eliminar el préstamo de ${prestamo.cliente}? Es como si nunca hubiera existido y NO se puede deshacer. Si ya pagó, usa "Marcar como pagado".`)) {
           estado.prestamos = estado.prestamos.filter(x => x.id !== id);
+          abiertos.delete(id);
           guardarEstado(); render();
         }
       }
