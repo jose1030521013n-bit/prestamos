@@ -323,10 +323,28 @@
       </div>
       <button id="guardarCapital">Guardar</button>
     </div>
+
+    <!-- Aportes y retiros de capital -->
+    <div class="capital-config" style="margin-bottom:6px;">
+      <div class="campo">
+        <label for="movMonto">Aporte o retiro de capital</label>
+        <input type="number" id="movMonto" placeholder="Ej: 1500000" min="0">
+      </div>
+      <div class="campo">
+        <label for="movTipo">Tipo</label>
+        <select id="movTipo">
+          <option value="aporte">➕ Aporte (meto plata)</option>
+          <option value="retiro">➖ Retiro (saco plata)</option>
+        </select>
+      </div>
+      <button id="guardarMov">Registrar</button>
+    </div>
+    <div class="multas-lista" id="listaMov"></div>
   </div>
 
   <div class="dashboard">
-    <div class="stat ganancia"><div class="label">Ganancias cobradas (intereses + multas)</div><div class="valor" id="statGanancias">$0</div></div>
+    <div class="stat disponible"><div class="label">Capital total (con ganancias incluidas)</div><div class="valor" id="statCapitalTotal">$0</div></div>
+    <div class="stat ganancia"><div class="label">Ganancias ya sumadas al capital (intereses + multas)</div><div class="valor" id="statGanancias">$0</div></div>
     <div class="stat disponible"><div class="label">Capital disponible (en mano)</div><div class="valor" id="statDisponible">$0</div></div>
     <div class="stat movimiento"><div class="label">Capital en movimiento (por recuperar)</div><div class="valor" id="statMovimiento">$0</div></div>
     <div class="stat proyeccion"><div class="label">Proyección al finalizar todos los cobros</div><div class="valor" id="statProyeccion">$0</div></div>
@@ -467,7 +485,8 @@ const GRUPOS = [
   { clave: 'mensual',         corto: 'Mensuales',     titulo: '📅 Mensuales · 30 a 30' }
 ];
 
-let estado = { capitalBase: 0, prestamos: [] };
+// ajustes = aportes y retiros de capital: { id, fecha, tipo: 'aporte' | 'retiro', monto }
+let estado = { capitalBase: 0, prestamos: [], ajustes: [] };
 let mesSeleccionado = 'todos';
 let filtroEstado = 'todos';        // 'todos' | 'activos' | 'pagados'
 let filtroModalidad = 'todas';     // 'todas' | 'diario' | 'quincenal' | 'quincenal_doble' | 'mensual'
@@ -537,10 +556,11 @@ onAuthStateChanged(auth, (user) => {
         const data = snap.data();
         estado = {
           capitalBase: data.capitalBase || 0,
-          prestamos: data.prestamos || []
+          prestamos: data.prestamos || [],
+          ajustes: data.ajustes || []
         };
       } else {
-        estado = { capitalBase: 0, prestamos: [] };
+        estado = { capitalBase: 0, prestamos: [], ajustes: [] };
         setDoc(refUsuario, estado).catch(err => console.error(err));
       }
       document.getElementById('capitalBaseInput').value = estado.capitalBase || '';
@@ -552,7 +572,7 @@ onAuthStateChanged(auth, (user) => {
   } else {
     document.getElementById('loginScreen').style.display = 'block';
     document.getElementById('appContent').style.display = 'none';
-    estado = { capitalBase: 0, prestamos: [] };
+    estado = { capitalBase: 0, prestamos: [], ajustes: [] };
     mesSeleccionado = 'todos';
     filtroEstado = 'todos';
     filtroModalidad = 'todas';
@@ -732,6 +752,24 @@ document.getElementById('guardarCapital').addEventListener('click', () => {
 });
 
 /* ============================================================
+   APORTES Y RETIROS DE CAPITAL
+   ============================================================ */
+document.getElementById('guardarMov').addEventListener('click', () => {
+  const monto = Number(document.getElementById('movMonto').value);
+  if (!monto || monto <= 0) { alert('Escribe un monto válido.'); return; }
+  estado.ajustes = estado.ajustes || [];
+  estado.ajustes.push({
+    id: Date.now().toString(),
+    fecha: hoyLocal(),
+    tipo: document.getElementById('movTipo').value,
+    monto
+  });
+  document.getElementById('movMonto').value = '';
+  guardarEstado();
+  render();
+});
+
+/* ============================================================
    REPORTE DE IMPRESIÓN (agrupado por forma de cobro, luego por fecha de inicio)
    ============================================================ */
 document.getElementById('btnImprimir').addEventListener('click', () => {
@@ -870,8 +908,9 @@ function render() {
        avance = cuotas pagadas / total de cuotas
        Capital en movimiento = lo prestado que aún no se ha recuperado  = monto * (1 - avance)
        Ganancias cobradas    = interés cobrado hasta hoy (+ multas, cuando el préstamo ya está pagado)
-       Capital disponible    = capital inicial + ganancias cobradas - capital en movimiento
-       Proyección            = capital inicial + TODAS las ganancias (cobradas y pendientes) + multas */
+       Capital total         = capital inicial + aportes - retiros + ganancias cobradas
+       Capital disponible    = capital total - capital en movimiento
+       Proyección            = capital inicial + aportes - retiros + TODAS las ganancias (cobradas y pendientes) + multas */
   let gananciasCobradas = 0, capitalEnMovimiento = 0, gananciaTotalProyectada = 0;
 
   estado.prestamos.forEach(p => {
@@ -882,14 +921,29 @@ function render() {
     gananciaTotalProyectada += c.ganancia + c.totalMultas;
   });
 
+  const ajustes = estado.ajustes || [];
+  const netoAjustes = ajustes.reduce((s, a) => s + (a.tipo === 'retiro' ? -a.monto : a.monto), 0);
   const capitalBase = estado.capitalBase || 0;
-  const capitalDisponible = capitalBase + gananciasCobradas - capitalEnMovimiento;
-  const proyeccion = capitalBase + gananciaTotalProyectada;
+  const capitalTotal = capitalBase + netoAjustes + gananciasCobradas;
+  const capitalDisponible = capitalTotal - capitalEnMovimiento;
+  const proyeccion = capitalBase + netoAjustes + gananciaTotalProyectada;
 
+  document.getElementById('statCapitalTotal').textContent = fmt(capitalTotal);
   document.getElementById('statGanancias').textContent = fmt(gananciasCobradas);
   document.getElementById('statMovimiento').textContent = fmt(capitalEnMovimiento);
   document.getElementById('statDisponible').textContent = fmt(capitalDisponible);
   document.getElementById('statProyeccion').textContent = fmt(proyeccion);
+
+  // --- Lista de aportes y retiros ---
+  document.getElementById('listaMov').innerHTML = ajustes.length === 0
+    ? '<span style="color:var(--text-muted)">Sin aportes ni retiros registrados</span>'
+    : ajustes.map((a, i) => `<div class="item"><span>${new Date(a.fecha + 'T00:00:00').toLocaleDateString('es-CO')} — ${a.tipo === 'retiro' ? 'Retiro' : 'Aporte'}</span><span style="display:flex;align-items:center;gap:8px;">${a.tipo === 'retiro' ? '−' : '+'}${fmt(a.monto)}<button class="chica secundario" data-quitar-mov="${i}" style="padding:2px 9px;font-size:0.72rem;">✕ Quitar</button></span></div>`).join('');
+  document.querySelectorAll('[data-quitar-mov]').forEach(b => b.addEventListener('click', () => {
+    if (confirm('¿Quitar este movimiento de capital?')) {
+      estado.ajustes.splice(Number(b.dataset.quitarMov), 1);
+      guardarEstado(); render();
+    }
+  }));
 
   // --- Tabs de meses ---
   const meses = obtenerMesesDisponibles();
